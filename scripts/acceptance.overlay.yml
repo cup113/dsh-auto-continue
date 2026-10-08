@@ -1,0 +1,40 @@
+# Acceptance overlay for the auto-continue recovery path.
+#
+#   terminal 1: node scripts/mock-gateway.mjs
+#   terminal 2: dsh web --patch scripts/acceptance.overlay.yml
+#
+# A patch REPLACES the targeted row's whole config, so this restates both
+# llm-pi-ai providers exactly as the web profile declares them; only the
+# command-code baseURL differs. Keep it in sync when the profile row changes.
+- id: llm-pi-ai
+  name: "@deepseek-ai/dsh-llm-pi-ai"
+  config:
+    providers:
+      zai-coding-cn:
+        apiKeyEnv: ZAI_CODING_CN_API_KEY
+        models:
+          - id: glm-5.3
+            name: GLM-5.3
+            contextWindow: 1000000
+            maxTokens: 131072
+            input:
+              - text
+      command-code:
+        apiKeyEnv: COMMAND_CODE_API_KEY
+        api: openai-responses
+        baseURL: http://127.0.0.1:8791/provider/v1
+        models:
+          - id: deepseek/deepseek-v4.1-flash
+            name: DS-V4-1-Flash-CC
+            contextWindow: 1000000
+            reasoningEfforts:
+              off: null
+              minimal: minimal
+              low: low
+              medium: medium
+              high: high
+              xhigh: xhigh
+              max: max
+            input:
+              - text
+              - image

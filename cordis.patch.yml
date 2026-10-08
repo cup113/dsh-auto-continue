@@ -1,0 +1,17 @@
+# Row contributed by this bundle. The profile's `dsh.profile.bundles` list decides
+# whether it loads; the config below is the complete default policy.
+- id: auto-continue
+  name: dsh-auto-continue
+  config:
+    enabled: true
+    # Only the rejection that cannot be recovered by resending the same request.
+    codes:
+      - INVALID_REQUEST
+    # Bounded: the fourth failure in a row goes back to the human.
+    maxContinues: 3
+    delaysMs:
+      - 15000
+      - 60000
+      - 240000
+    # An active goal keeps its own continuation authority (see README).
+    skipActiveGoal: true
