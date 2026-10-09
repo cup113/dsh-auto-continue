@@ -62,15 +62,29 @@ cd <path-to>\dsh-auto-continue
 npm install            # 只为一件事：@deepseek-ai/dsh-llm 的 createUserMessage / boundContextSummary
 ```
 
-profile（`~/.dsh/profiles/<name>/package.json`）：
+正路是让插件管理器维护 profile（它同时写 `dependencies` 与 `dsh.profile.bundles`）：
+
+```powershell
+dsh plugin --profile web add github:cup113/dsh-auto-continue   # 或 add link:<path-to>/dsh-auto-continue
+```
+
+手写 profile（`~/.dsh/profiles/<name>/package.json`）等价于：
 
 ```json
-"dependencies": { "dsh-auto-continue": "link:<path-to>/dsh-auto-continue" },
+"dependencies": { "dsh-auto-continue": "github:cup113/dsh-auto-continue" },
 "dsh": { "profile": { "bundles": [ "...", "dsh-auto-continue" ] } }
 ```
 
 然后 `pnpm install`（若报 lockfile 冲突：`$env:CI='true'` + `--no-frozen-lockfile`），再**重启 `dsh web`**——
 `patchReload: live` 只覆盖 cordis 配置，不覆盖 node 侧的插件代码。
+
+> **列进 `dsh.profile.bundles` 不等于挂载。** 那一行只让本包的 `cordis.patch.yml` 成为参与组合的一层；
+> Loader 行必须由它自己用 **`insert:`** 插出来。写成裸 `- id: auto-continue` 的话，组合阶段只会得到
+> `patch: entry "auto-continue" not found`，而 cordis 默认没有任何 stdout exporter，这行 warn 无处可见，
+> 插件于是永远不加载——0.1.0 正是这样"装了却没生效"。`test/bundle-patch.mjs` 钉住这条契约。
+
+git 安装（`github:…`）会在 profile 的 `pnpm-lock.yaml` 里钉死一个 commit：**改完代码要 push，并重新
+`add`/`update` 该依赖**，否则 profile 读到的还是旧 tarball。要本地改完立刻生效就用 `link:<path>`。
 
 依赖约定（照 `dsh-tool-bridge` 的既有布局）：`@deepseek-ai/dsh-llm` 同时出现在 `peerDependencies` 与
 `devDependencies`，因为 `link:` 安装下 Node 从插件的 realpath 解析，profile 的 `node_modules` 不是它的祖先。
@@ -84,11 +98,16 @@ profile（`~/.dsh/profiles/<name>/package.json`）：
 ## 验收
 
 ```powershell
+dsh web --dump-config | Select-String auto-continue   # 先看组合：树里没有这一行，后面都不用试
 npm test                                     # 状态机单测（假 ctx，无 DSH 运行时）
 node scripts/mock-gateway.mjs                # 终端 1：首个 POST /responses 回 400，其余转发真网关
 dsh web --patch scripts/acceptance.overlay.yml   # 终端 2：只改 command-code 的 baseURL
 npm run stats                                # 从会话日志量救回率（安装前后都能跑）
 ```
+
+`--dump-config` 只组合、不 boot、不求解 `!!js`，但它会重写 profile 的 `cordis.yml`（CLI 参考里有说明）。
+若组合结果里没有这一行，去 `$DSH_HOME/logs/startup-*.log` 找 `patch: entry "auto-continue" not found`——
+那就是 bundle patch 丢了 `insert:`。
 
 mock 端到端要看三件事：失败行出现；`auto-continue 1/3 — INVALID_REQUEST` 的 notice 行出现；
 15 秒后第二次请求成功、任务继续做完。
