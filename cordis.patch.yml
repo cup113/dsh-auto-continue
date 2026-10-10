@@ -26,5 +26,6 @@
           - 15000
           - 60000
           - 240000
-        # An active goal keeps its own continuation authority (see README).
+        # An armed goal keeps its own continuation authority; one the driver has let
+        # go of (disarmed, whatever its phase) is recovered instead (see README).
         skipActiveGoal: true

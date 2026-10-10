@@ -24,7 +24,8 @@
 状态按 agent 记账（进程内）：`{ 连续次数, 待发预约, 定时器 }`。最后一条 `turn/end` 说了算。
 
 1. `turn/end` 且 `reason.kind === 'error'`、`reason.error.code` ∈ `codes`、且该会话有存活的注册 agent → 记一个预约。
-2. 以下任一情形不记：`reason.kind` 是 `aborted` / `max-tokens` / `completed`；`code` 不在集合里；次数已达 `maxContinues`；会话有 **active** goal（`skipActiveGoal`）。
+2. 以下任一情形不记：`reason.kind` 是 `aborted` / `max-tokens` / `completed`；`code` 不在集合里；次数已达 `maxContinues`；
+   会话有一个 **armed** goal（`skipActiveGoal`：`phase === 'active'` **且** `activation === 'armed'`）。
 3. 只在 `agent/status` 变成 `idle` 时才起定时器，延迟 = `delaysMs[min(次数, len-1)]`。
 4. 等待期间出现任何**非本插件来源**的 `user/message`（人类、或 tool-jobs 那类通知）、或 `turn/start`、或 agent 转入 `running` → 取消本次预约。
 5. 定时器到点后复查：插件未卸载、agent 仍注册且 `status === 'idle'`、预约仍是当前那一个 → 才投递；随后 `次数 += 1` 并 `agent.followup(...)`。
@@ -50,7 +51,7 @@ Your previous request was rejected by the provider before it produced any output
     codes: [INVALID_REQUEST]        # 可加 PI_AI_ERROR / UNKNOWN，但先想清楚它们的语义
     maxContinues: 3
     delaysMs: [15000, 60000, 240000] # 长度可以短于 maxContinues，此时重复最后一个值
-    skipActiveGoal: true
+    skipActiveGoal: true            # 只让位给"driver 真的在推进"的 goal（armed），见下
 ```
 
 非法值（未知键、0 或负数延迟、非整数上限、空的 `codes`）在**加载时直接抛错**，不静默降级。
@@ -125,8 +126,13 @@ automatic continuations:  0
   `reasoning_text must be passed back`（4 次）是请求体本身的问题，新 turn 同样会失败——那 3 次预算就是净损耗。
   根治要么网关侧修，要么关掉对应的 reasoning 字段。
 - **它会在你不在场时替你发言**（含子代理）。这是它被放在树外、且默认只在 `INVALID_REQUEST` 上生效的原因。
-- **goal 会话被跳过。** goal-round-driver 在 `agent/error` 上会 disarm，把自动工作交还人类 resume；
-  这个插件不该绕过那道栅栏。要允许它续 goal 会话，把 `skipActiveGoal` 设为 false（代价：继续发生在 goal 轮次计数之外）。
+- **只对 driver 还掌权的 goal 会话让位。** goal-round-driver 出错时 `agent/error` → `disarm`，而 disarm 只收走
+  **进程内**的 `activation`（`phase` 是 durable 的，仍是 `active`；重启后每个 goal 也从 disarmed 起步）。
+  旧判据只看 `phase`，于是在任何 goal 会话里**永久**失效——实测：某会话 goal 建立 10 分钟后的那次 400 没被续跑，
+  而同一会话此前 3 次完全相同的 400 都被 15 秒续上并恢复。现在判据取两者之与：**armed 才让位**，driver 已经放手、
+  正等人类 resume 的会话由本插件接手。代价：这时的续跑发生在 goal 轮次计数之外（`roundsStarted` 不涨、
+  `maxGoalRounds` 不消耗），goal 自身要等你 resume 才会恢复自动推进。
+  要完全不看 goal（连 armed 的也由本插件续），把 `skipActiveGoal` 设为 false。
 - **子代理也续。** 依据：7 个子代理会话命中过同一错误，不接住会直接污染父代理的 `send_message` 结果。
 - **进程内计数。** 重启后归零——重启后不存在"刚失败的 idle agent"，所以不需要持久化。
 

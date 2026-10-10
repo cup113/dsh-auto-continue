@@ -194,9 +194,9 @@ test('a new turn cancels the pending wait', async () => {
   assert.equal(agent.delivered.length, 0)
 })
 
-test('an active goal keeps its own continuation authority', async () => {
+test('an armed goal keeps its own continuation authority', async () => {
   const h = harness({ delaysMs: [1] })
-  h.services.set('goals', { get: () => ({ phase: 'active' }) })
+  h.services.set('goals', { get: () => ({ phase: 'active', activation: 'armed' }) })
   const agent = h.spawn()
   h.emit('session/event', agent.session, rejected(1))
   h.emit('agent/status', { agent, status: 'idle' })
@@ -204,12 +204,44 @@ test('an active goal keeps its own continuation authority', async () => {
   assert.equal(agent.delivered.length, 0)
 
   const opting = harness({ delaysMs: [1], skipActiveGoal: false })
-  opting.services.set('goals', { get: () => ({ phase: 'active' }) })
+  opting.services.set('goals', { get: () => ({ phase: 'active', activation: 'armed' }) })
   const other = opting.spawn()
   opting.emit('session/event', other.session, rejected(1))
   opting.emit('agent/status', { agent: other, status: 'idle' })
   await settled()
   assert.equal(other.delivered.length, 1)
+})
+
+test('a disarmed goal no longer owns the session, so the plugin recovers it', async () => {
+  // `phase` is durable but `activation` is process-local: the goal driver disarms
+  // it on every failed turn, and a goal reloaded after a restart starts disarmed.
+  // Either way no driver is driving, so this continuation is the plugin's to submit.
+  const h = harness({ delaysMs: [1] })
+  h.services.set('goals', { get: () => ({ phase: 'active', activation: 'disarmed' }) })
+  const agent = h.spawn()
+  h.emit('session/event', agent.session, rejected(1))
+  h.emit('agent/status', { agent, status: 'idle' })
+  await settled()
+  assert.deepEqual(
+    agent.delivered.map((message) => message.source.summary),
+    ['auto-continue 1/3 — INVALID_REQUEST'],
+  )
+})
+
+test('a goal this plugin cannot read keeps its authority', async () => {
+  const h = harness({ delaysMs: [1] })
+  h.services.set('goals', {
+    get: () => {
+      throw new Error('goal projection is not registered')
+    },
+  })
+  const agent = h.spawn()
+  h.emit('session/event', agent.session, rejected(1))
+  h.emit('agent/status', { agent, status: 'idle' })
+  await settled()
+  assert.equal(agent.delivered.length, 0)
+  assert.equal(h.logs.warn.length, 1)
+  assert.match(h.logs.warn[0], /could not read the goal/)
 })
 
 test('a session with no live agent is ignored', async () => {

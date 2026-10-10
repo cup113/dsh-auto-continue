@@ -85,6 +85,36 @@ function reason(error) {
 }
 
 /**
+ * Whether the goal driver currently owns this session's continuation.
+ *
+ * The conjunction is the whole point. `phase` is durable, but `activation` is
+ * process-local: `@deepseek-ai/dsh-goal` keeps it out of the durable projection,
+ * the driver disarms it on every failed turn, and a goal reloaded after a restart
+ * starts disarmed again. So a goal the driver has already let go of still reads
+ * `phase: 'active'` — a session nobody is driving, which is exactly the gap a
+ * continuation fills. Declining on `phase` alone silently disables this plugin in
+ * every goal session forever (observed: a 400 ten minutes after a goal was created
+ * was never continued, while three earlier identical ones in that session were).
+ *
+ * An unreadable goal keeps its authority: the fence wins over recovery.
+ *
+ * @param {object} ctx - the plugin context; `goals` is an optional service.
+ * @param {object} agent - the live agent whose turn just ended.
+ * @returns {boolean} true when a live, armed goal owns this session's continuation.
+ */
+function goalDriverOwns(ctx, agent) {
+  try {
+    const goal = ctx.get('goals')?.get(agent)
+    return goal?.phase === 'active' && goal.activation === 'armed'
+  } catch (error) {
+    ctx.logger.warn(
+      `auto-continue: could not read the goal for agent "${agent.id}": ${reason(error)}`,
+    )
+    return true
+  }
+}
+
+/**
  * Install the continuation policy for every agent in this plugin's scope.
  *
  * @param {object} ctx - the plugin context; `agents` must be injected.
@@ -191,9 +221,11 @@ export function apply(ctx, config = {}) {
     if (entry.count >= settings.maxContinues) return
     const code = event.data.reason.error.code
     if (!settings.codes.has(code)) return
-    // An active goal keeps its own continuation authority: the goal driver disarms
-    // on failure and requires a human resume, which this plugin must not route around.
-    if (settings.skipActiveGoal && ctx.get('goals')?.get(agent)?.phase === 'active') return
+    // An armed goal owns the session: its driver queues the next round, and this
+    // plugin must not route around it. A disarmed goal (the driver gave up on a
+    // failure, or the goal reloaded after a restart) is waiting for input instead —
+    // that one this plugin recovers.
+    if (settings.skipActiveGoal && goalDriverOwns(ctx, agent)) return
     entry.pending = { code, turn: event.data.turn }
   })
 
